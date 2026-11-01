@@ -72,6 +72,10 @@ Single shot and long range:
 mm, err := d.Distance()          // -1 when out of range
 _ = d.SetTimingBudget(50 * time.Millisecond)
 _ = d.SetSignalRateLimit(0.1)
+// Changing the budget while streaming requires a restart: the sensor latches
+// the timing configuration when continuous mode starts.
+_ = d.StopContinuous()
+_ = d.StartContinuous()
 
 _ = d.LongRange()                // 200 ms + 0.1 MCPS, up to 2 m
 ```

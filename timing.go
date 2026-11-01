@@ -14,6 +14,9 @@ func (d *Device) TimingBudget() (time.Duration, error) {
 
 // SetTimingBudget sets the measurement timing budget (20-200 ms). A longer
 // budget averages more light and extends the usable range.
+//
+// The sensor latches its timing configuration when continuous mode starts, so
+// stop and restart continuous mode for a new budget to take effect.
 func (d *Device) SetTimingBudget(budget time.Duration) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
