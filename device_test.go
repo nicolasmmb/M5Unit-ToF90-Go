@@ -1,6 +1,7 @@
 package tof90
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -477,6 +478,37 @@ func TestSetAddress(t *testing.T) {
 	}
 }
 
+func TestMeasureContextCancel(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.readyAfter = 1 << 30 // never ready
+	d.SetTimeout(time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := d.MeasureContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("MeasureContext = %v, want DeadlineExceeded", err)
+	}
+}
+
+func TestContextWhileLocked(t *testing.T) {
+	d, _ := newTestDevice(t)
+	d.lock()
+	defer d.unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if _, err := d.ReadRangeContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ReadRangeContext while locked = %v", err)
+	}
+}
+
+func TestInitContextCanceled(t *testing.T) {
+	d := New(newFakeSensor())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := d.InitContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("InitContext = %v, want Canceled", err)
+	}
+}
+
 func TestNoAlloc(t *testing.T) {
 	f := newFakeSensor()
 	d := New(f)
@@ -499,6 +531,9 @@ func TestNoAlloc(t *testing.T) {
 		{"Distance", func() { _, _ = d.Distance() }},
 		{"DistanceCM", func() { _, _ = d.DistanceCM() }},
 		{"StartMeasurement", func() { _ = d.StartMeasurement() }},
+		{"MeasureContext", func() { _, _ = d.MeasureContext(context.Background()) }},
+		{"ReadRangeContext", func() { _, _ = d.ReadRangeContext(context.Background()) }},
+		{"DistanceContext", func() { _, _ = d.DistanceContext(context.Background()) }},
 		{"TimingBudget", func() { _, _ = d.TimingBudget() }},
 		{"SetTimingBudget", func() { _ = d.SetTimingBudget(50 * time.Millisecond) }},
 		{"SignalRateLimit", func() { _, _ = d.SignalRateLimit() }},

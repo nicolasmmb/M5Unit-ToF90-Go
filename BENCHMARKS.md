@@ -17,7 +17,7 @@ transactions, which is the quantity that dominates on real hardware: at
 | `BenchmarkSetTimingBudget` | recompute + write the timeout registers |
 | `BenchmarkSignalRateLimit` | read the 9.7 fixed-point limit |
 | `BenchmarkLongRange` | 200 ms budget + 0.1 MCPS signal limit |
-| `TestNoAlloc` | `AllocsPerRun == 0` for every public operation |
+| `TestNoAlloc` | `AllocsPerRun == 0` for every public operation (incl. Context variants) |
 | `TestFootprint` | `unsafe.Sizeof(Device{})` budget (96 B) |
 
 `tx/op` is reported by every benchmark. Allocation and footprint contracts run
@@ -52,6 +52,24 @@ make escape                # compiler heap-escape report
 | `LongRange` tx/op | 8 | 8 | — |
 | allocations (all ops) | 0 | **0** | — |
 | `Device` size | 72 B | **72 B** | — |
+
+Current absolute numbers after adding context cancellation (`-count=8`):
+
+| Benchmark | Result |
+|---|---:|
+| `Init` | 1.365 µs, 138 tx |
+| `Measure` | 193.8 ns, 12 tx |
+| `ReadRangeContinuous` | 92.3 ns, 3 tx |
+| `TimingBudget` | 24.9 ns, 0 tx |
+| `SetTimingBudget` | 70.5 ns, 7 tx |
+| `LongRange` | 71.7 ns, 8 tx |
+| allocations | 0 B, 0 allocs (all) |
+
+Context support replaces the mutex with a one-slot channel and checks
+`ctx.Done()` in the polling loops: about **30–60 ns per operation** on the
+host, still allocation-free. Against real hardware this is noise: three I2C
+transactions cost ~200 µs at 400 kHz and the sensor itself takes 20–200 ms
+per measurement.
 
 `Init` ns/op on the host rose 9.7% (963 → 1056 ns) because the fake I2C
 transaction costs ~5 ns, so the batching loop is visible. On real hardware the

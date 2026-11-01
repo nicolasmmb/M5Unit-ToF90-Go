@@ -16,6 +16,8 @@ CGo or Arduino.
 - I2C address change (`0x29` → any free address).
 - **Zero heap allocations per operation**: fixed scratch buffers, cached
   timing budget, no `fmt`.
+- Every polling operation has a **Context variant** for cancellation (and the
+  device lock is cancellable too).
 - Timeouts on every polling loop and sentinel errors (`errors.Is`).
 - Host tests with a full register-level sensor emulator, allocation contracts,
   RAM footprint budget and I2C transaction benchmarks.
@@ -86,25 +88,52 @@ _ = d.LongRange()                // 200 ms + 0.1 MCPS, up to 2 m
 |---|---|
 | `New(bus I2C) *Device` | Driver on any bus implementing `Tx(addr, w, r)` |
 | `NewAt(bus, address)` | Construct for a sensor already at another address |
-| `Init() error` | Reset, identify and load the tuning/calibration sequence |
+| `Init()` / `InitContext(ctx)` | Reset, identify and load the tuning/calibration sequence |
 | `StartMeasurement() error` | Start a single shot without waiting (do_range_measurement) |
-| `Measure() (Measurement, error)` | One single-shot reading |
+| `Measure()` / `MeasureContext(ctx)` | One single-shot reading |
 | `DistanceCM() (float32, error)` | Centimetres (official `get_distance`), `-0.1` invalid |
 | `Distance() (int16, error)` | Millimetres, `-1` when invalid |
-| `StartContinuous()` / `StopContinuous()` | Continuous mode |
+| `StartContinuous()` / `StopContinuous()` | Continuous mode (both have Context variants) |
+| `StartMeasurement()` / `StartMeasurementContext(ctx)` | Start a single shot without waiting |
 | `Ready() (bool, error)` | Result waiting (continuous mode) |
-| `ReadRange() (Measurement, error)` | Read the pending result |
+| `ReadRange()` / `ReadRangeContext(ctx)` | Read the pending result |
 | `TimingBudget()` / `SetTimingBudget(d)` | 20–200 ms, cached / applied |
 | `SignalRateLimit()` / `SetSignalRateLimit(v)` | MCPS |
 | `LongRange() error` | 200 ms budget + 0.1 MCPS |
 | `SetAddress(a) error` | Move the sensor to `0x08–0x77` |
 | `ModelID()` / `RevisionID()` | Identification registers |
-| `Reset() error` | Soft reset (call `Init` again) |
+| `Reset()` / `ResetContext(ctx)` | Soft reset (call `Init` again) |
 
 `Measurement`: `RangeMM int16`, `Status uint8` (raw VL53L0X range status),
 `Valid bool` (1-4000 mm, like the official M5Stack driver). Use
 `StatusValid(status)` to check the ST "range valid" codes (0, 3, 6 and 11 —
 11 is the merged-pulse variant reported by this unit).
+
+## Timeouts and cancellation
+
+Every polling loop has a deadline, so no call can wait forever on the sensor:
+
+| Operation | Worst case (defaults) |
+|---|---|
+| `ReadRange` / `Measure` / `Distance` | `timeout + timing budget` = 200 ms + 200 ms |
+| `StartContinuous` / `StartMeasurement` | `timeout` = 200 ms (start bit) |
+| `Init` / `Reset` | one `timeout` per poll stage + 138 transactions |
+| `SetTimingBudget` / `SetSignalRateLimit` / `SetAddress` | a few I2C transactions (TinyGo bounds each at 40 ms) |
+
+The operations above also accept a `context.Context` (`InitContext`,
+`MeasureContext`, `DistanceContext`, `ReadRangeContext`,
+`StartMeasurementContext`, `StartContinuousContext`, `StopContinuousContext`,
+`ResetContext`). The context is checked before every poll and between groups
+of I2C transactions, and it also cancels while waiting for the device lock:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+defer cancel()
+m, err := d.ReadRangeContext(ctx) // returns ctx.Err() when cancelled
+```
+
+The blocking `I2C.Tx` itself cannot be interrupted; TinyGo's implementation
+bounds it at 40 ms.
 
 ## Performance
 

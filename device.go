@@ -7,8 +7,8 @@
 package tof90
 
 import (
+	"context"
 	"errors"
-	"sync"
 	"time"
 )
 
@@ -99,9 +99,10 @@ type Measurement struct {
 }
 
 // Device is a VL53L0X-compatible ranging sensor. It is safe for concurrent
-// use: every public method serializes on an internal mutex.
+// use: every public method serializes on an internal semaphore. Operations
+// that poll the sensor also have Context variants that can be cancelled.
 type Device struct {
-	mu sync.Mutex
+	sem chan struct{}
 
 	bus     I2C
 	addr    uint8
@@ -118,8 +119,13 @@ type Device struct {
 }
 
 // New returns a Device on bus with the default address and timeout.
+//
+// Init, Measure, Distance, ReadRange, StartMeasurement, StartContinuous,
+// StopContinuous and Reset have Context variants for cancellation; the other
+// methods are short register transactions bounded by the I2C driver.
 func New(bus I2C) *Device {
 	return &Device{
+		sem:     make(chan struct{}, 1),
 		bus:     bus,
 		addr:    DefaultAddress,
 		timeout: defaultTimeout,
@@ -135,36 +141,71 @@ func NewAt(bus I2C, address uint8) *Device {
 	return d
 }
 
+// lock acquires the device without cancellation. Short register operations use
+// it; the polling operations have Context variants that select on ctx.Done.
+func (d *Device) lock() { d.sem <- struct{}{} }
+
+// lockContext acquires the device, giving up when ctx is done.
+func (d *Device) lockContext(ctx context.Context) error {
+	select {
+	case d.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (d *Device) unlock() { <-d.sem }
+
+// ctxOrBackground treats a nil context as Background.
+func ctxOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+// ctxErr reports a cancelled/expired context, so long sequences of I2C
+// transactions (init, continuous start) can bail out between them.
+func ctxErr(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 // SetTimeout sets the maximum time spent in each polling loop. Call it before
 // Init. A zero or negative value restores the default (200 ms).
 func (d *Device) SetTimeout(timeout time.Duration) {
-	d.mu.Lock()
+	d.lock()
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	d.timeout = timeout
-	d.mu.Unlock()
+	d.unlock()
 }
 
 // Address returns the current 7-bit I2C address.
 func (d *Device) Address() uint8 {
-	d.mu.Lock()
+	d.lock()
 	a := d.addr
-	d.mu.Unlock()
+	d.unlock()
 	return a
 }
 
 // ModelID reads the identification register.
 func (d *Device) ModelID() (uint8, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	return d.readU8(regIdentificationModelID)
 }
 
 // RevisionID reads the revision register.
 func (d *Device) RevisionID() (uint8, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	return d.readU8(regIdentificationRevision)
 }
 
@@ -174,8 +215,8 @@ func (d *Device) SetAddress(addr uint8) error {
 	if addr < 0x08 || addr > 0x77 {
 		return ErrAddress
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	if addr == d.addr {
 		return nil
 	}
@@ -228,10 +269,13 @@ func (d *Device) writeU16(reg uint8, val uint16) error {
 	return d.bus.Tx(uint16(d.addr), d.tx[:3], nil)
 }
 
-// wait polls cond until it returns true or the timeout elapses.
-func (d *Device) wait(cond func() (bool, error)) error {
+// wait polls cond until it returns true, the timeout elapses or ctx is done.
+func (d *Device) wait(ctx context.Context, cond func() (bool, error)) error {
 	deadline := time.Now().Add(d.timeout)
 	for {
+		if err := ctxErr(ctx); err != nil {
+			return err
+		}
 		ok, err := cond()
 		if err != nil {
 			return err
@@ -247,18 +291,20 @@ func (d *Device) wait(cond func() (bool, error)) error {
 }
 
 // waitStart polls the SYSRANGE_START start bit until the measurement starts.
-func (d *Device) waitStart() error {
-	return d.wait(func() (bool, error) {
+func (d *Device) waitStart(ctx context.Context) error {
+	return d.wait(ctx, func() (bool, error) {
 		v, err := d.readU8(regSysRangeStart)
 		return v&0x01 == 0, err
 	})
 }
 
 // waitReady waits for a range result. The deadline includes the timing budget.
-func (d *Device) waitReady() error {
-	timeout := d.timeout + d.budget
-	deadline := time.Now().Add(timeout)
+func (d *Device) waitReady(ctx context.Context) error {
+	deadline := time.Now().Add(d.timeout + d.budget)
 	for {
+		if err := ctxErr(ctx); err != nil {
+			return err
+		}
 		v, err := d.readU8(regResultInterruptStatus)
 		if err != nil {
 			return err

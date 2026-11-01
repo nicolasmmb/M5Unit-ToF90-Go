@@ -1,15 +1,29 @@
 package tof90
 
+import "context"
+
 // Init resets the sensor, validates its identification registers and loads the
 // ST/M5Stack tuning sequence (SPAD map, VHV/phase calibration, timing budget).
 func (d *Device) Init() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.initLocked()
+	return d.InitContext(context.Background())
 }
 
-func (d *Device) initLocked() error {
-	if err := d.resetLocked(); err != nil {
+// InitContext is Init with cancellation. The context is checked between
+// polling loops and I2C transactions.
+func (d *Device) InitContext(ctx context.Context) error {
+	ctx = ctxOrBackground(ctx)
+	if err := d.lockContext(ctx); err != nil {
+		return err
+	}
+	defer d.unlock()
+	return d.initLocked(ctx)
+}
+
+func (d *Device) initLocked(ctx context.Context) error {
+	if err := d.resetLocked(ctx); err != nil {
+		return err
+	}
+	if err := ctxErr(ctx); err != nil {
 		return err
 	}
 
@@ -83,7 +97,7 @@ func (d *Device) initLocked() error {
 		return err
 	}
 
-	spadCount, aperture, err := d.spadInfoLocked()
+	spadCount, aperture, err := d.spadInfoLocked(ctx)
 	if err != nil {
 		return err
 	}
@@ -125,7 +139,7 @@ func (d *Device) initLocked() error {
 		return err
 	}
 
-	if err := d.writeTableLocked(tuningTable[:]); err != nil {
+	if err := d.writeTableLocked(ctx, tuningTable[:]); err != nil {
 		return err
 	}
 
@@ -145,6 +159,9 @@ func (d *Device) initLocked() error {
 	}
 
 	// Keep the factory timing budget, then run both reference calibrations.
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
 	budget, err := d.getBudgetLocked()
 	if err != nil {
 		return err
@@ -158,13 +175,13 @@ func (d *Device) initLocked() error {
 	if err := d.write(regSystemSequenceConfig, 0x01); err != nil {
 		return err
 	}
-	if err := d.refCalLocked(0x40); err != nil {
+	if err := d.refCalLocked(ctx, 0x40); err != nil {
 		return err
 	}
 	if err := d.write(regSystemSequenceConfig, 0x02); err != nil {
 		return err
 	}
-	if err := d.refCalLocked(0x00); err != nil {
+	if err := d.refCalLocked(ctx, 0x00); err != nil {
 		return err
 	}
 	if err := d.write(regSystemSequenceConfig, 0xE8); err != nil {
@@ -176,19 +193,22 @@ func (d *Device) initLocked() error {
 }
 
 // resetLocked performs the VL53L0X soft reset and waits for the model ID.
-func (d *Device) resetLocked() error {
+func (d *Device) resetLocked(ctx context.Context) error {
 	// Wait for the sensor to answer after power-up.
-	if err := d.wait(func() (bool, error) {
+	if err := d.wait(ctx, func() (bool, error) {
 		_, err := d.readU8(regIdentificationModelID)
 		return err == nil, nil
 	}); err != nil {
-		return ErrNotConnected
+		if err == ErrTimeout {
+			return ErrNotConnected
+		}
+		return err
 	}
 
 	if err := d.write(regSoftReset, 0x00); err != nil {
 		return err
 	}
-	if err := d.wait(func() (bool, error) {
+	if err := d.wait(ctx, func() (bool, error) {
 		v, err := d.readU8(regIdentificationModelID)
 		return err == nil && v != ModelID, nil
 	}); err != nil {
@@ -197,7 +217,7 @@ func (d *Device) resetLocked() error {
 	if err := d.write(regSoftReset, 0x01); err != nil {
 		return err
 	}
-	if err := d.wait(func() (bool, error) {
+	if err := d.wait(ctx, func() (bool, error) {
 		v, err := d.readU8(regIdentificationModelID)
 		return err == nil && v == ModelID, nil
 	}); err != nil {
@@ -207,7 +227,7 @@ func (d *Device) resetLocked() error {
 }
 
 // spadInfoLocked reads the reference SPAD count and type from the sensor.
-func (d *Device) spadInfoLocked() (count uint8, aperture bool, err error) {
+func (d *Device) spadInfoLocked(ctx context.Context) (count uint8, aperture bool, err error) {
 	for _, rv := range [...]regVal{
 		{0x80, 0x01}, {0xFF, 0x01}, {0x00, 0x00},
 	} {
@@ -233,7 +253,7 @@ func (d *Device) spadInfoLocked() (count uint8, aperture bool, err error) {
 			return 0, false, err
 		}
 	}
-	if err := d.wait(func() (bool, error) {
+	if err := d.wait(ctx, func() (bool, error) {
 		v, err := d.readU8(0x83)
 		return v != 0x00, err
 	}); err != nil {
@@ -271,11 +291,11 @@ func (d *Device) spadInfoLocked() (count uint8, aperture bool, err error) {
 }
 
 // refCalLocked runs one VHV or phase reference calibration.
-func (d *Device) refCalLocked(vhv uint8) error {
+func (d *Device) refCalLocked(ctx context.Context, vhv uint8) error {
 	if err := d.write(regSysRangeStart, 0x01|vhv); err != nil {
 		return err
 	}
-	if err := d.wait(func() (bool, error) {
+	if err := d.wait(ctx, func() (bool, error) {
 		v, err := d.readU8(regResultInterruptStatus)
 		return v&0x07 != 0, err
 	}); err != nil {
@@ -293,8 +313,11 @@ type regVal struct {
 
 // writeTableLocked writes table entries, batching consecutive registers into a
 // single I2C transaction (the tuning table has 80 writes but only 59 runs).
-func (d *Device) writeTableLocked(table []regVal) error {
+func (d *Device) writeTableLocked(ctx context.Context, table []regVal) error {
 	for i := 0; i < len(table); {
+		if err := ctxErr(ctx); err != nil {
+			return err
+		}
 		n := 1
 		for i+n < len(table) && table[i+n].reg == table[i].reg+uint8(n) && n < len(d.tx)-1 {
 			n++

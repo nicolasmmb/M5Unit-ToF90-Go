@@ -6,9 +6,9 @@ import "time"
 // the sensor during Init and updated by SetTimingBudget/LongRange, so this call
 // does not touch the I2C bus.
 func (d *Device) TimingBudget() (time.Duration, error) {
-	d.mu.Lock()
+	d.lock()
 	budget := d.budget
-	d.mu.Unlock()
+	d.unlock()
 	return budget, nil
 }
 
@@ -18,15 +18,15 @@ func (d *Device) TimingBudget() (time.Duration, error) {
 // The sensor latches its timing configuration when continuous mode starts, so
 // stop and restart continuous mode for a new budget to take effect.
 func (d *Device) SetTimingBudget(budget time.Duration) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	return d.setBudgetLocked(budget)
 }
 
 // SignalRateLimit returns the final range signal rate limit in MCPS.
 func (d *Device) SignalRateLimit() (float32, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	return d.getSignalRateLimitLocked()
 }
 
@@ -34,8 +34,8 @@ func (d *Device) SignalRateLimit() (float32, error) {
 // (0-511.99). Lower values accept weaker returns and extend the range, at the
 // cost of more noise.
 func (d *Device) SetSignalRateLimit(mcps float32) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	return d.setSignalRateLimitLocked(mcps)
 }
 
@@ -43,8 +43,8 @@ func (d *Device) SetSignalRateLimit(mcps float32) error {
 // budget and a 0.1 MCPS signal rate limit. It needs a dark environment with
 // little infrared interference.
 func (d *Device) LongRange() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.lock()
+	defer d.unlock()
 	if err := d.setBudgetLocked(200 * time.Millisecond); err != nil {
 		return err
 	}
