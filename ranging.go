@@ -155,6 +155,6 @@ func (d *Device) readRangeLocked() (Measurement, error) {
 	return Measurement{
 		RangeMM: mm,
 		Status:  status,
-		Valid:   status == RangeValid && mm > 0 && mm <= 4000,
+		Valid:   mm > 0 && mm <= 4000,
 	}, nil
 }

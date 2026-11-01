@@ -94,9 +94,10 @@ _ = d.LongRange()                // 200 ms + 0.1 MCPS, up to 2 m
 | `ModelID()` / `RevisionID()` | Identification registers |
 | `Reset() error` | Soft reset (call `Init` again) |
 
-`Measurement`: `RangeMM int16`, `Status uint8` (`RangeValid`,
-`RangeSigmaFail`, `RangeSignalFail`, `RangeMinRange`, `RangePhaseFail`,
-`RangeHardwareFail`), `Valid bool`.
+`Measurement`: `RangeMM int16`, `Status uint8` (raw VL53L0X range status),
+`Valid bool` (1-4000 mm, like the official M5Stack driver). Use
+`StatusValid(status)` to check the ST "range valid" codes (0, 3, 6 and 11 —
+11 is the merged-pulse variant reported by this unit).
 
 ## Performance
 

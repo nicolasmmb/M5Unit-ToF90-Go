@@ -69,23 +69,32 @@ var (
 	ErrNoBudget     = errors.New("tof90: timing budget too small for the sequence")
 )
 
-// Range status codes from the RESULT_RANGE_STATUS byte.
-const (
-	RangeValid        uint8 = 0
-	RangeSigmaFail    uint8 = 1
-	RangeSignalFail   uint8 = 2
-	RangeMinRange     uint8 = 3
-	RangePhaseFail    uint8 = 4
-	RangeHardwareFail uint8 = 5
-)
+// StatusValid reports whether a VL53L0X range status still carries a usable
+// distance. Several codes are "valid" variants:
+//
+//	0  range valid
+//	3  range valid, minimum range clipped
+//	6  range valid, wrap check not performed
+//	11 range valid, merged pulse
+//
+// The official M5Stack driver ignores the status and only rejects readings
+// above 4 m; Measurement.Valid follows that behaviour.
+func StatusValid(status uint8) bool {
+	switch status {
+	case 0, 3, 6, 11:
+		return true
+	}
+	return false
+}
 
 // Measurement is one range reading.
 type Measurement struct {
 	// RangeMM is the measured distance in millimetres.
 	RangeMM int16
-	// Status is the sensor range status (0 = valid).
+	// Status is the raw sensor range status (bits 3-6 of RESULT_RANGE_STATUS).
 	Status uint8
-	// Valid is true when Status is 0 and the reading is within 4 m.
+	// Valid is true when the range is usable (1-4000 mm), matching the
+	// official M5Stack driver. Check StatusValid for the status nuance.
 	Valid bool
 }
 

@@ -27,7 +27,7 @@ func BenchmarkInit(b *testing.B) {
 
 func BenchmarkMeasure(b *testing.B) {
 	d, f := newTestDevice(b)
-	f.setRange(500, RangeValid)
+	f.setRange(500, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
 	start := f.tx
@@ -41,7 +41,7 @@ func BenchmarkMeasure(b *testing.B) {
 
 func BenchmarkReadRangeContinuous(b *testing.B) {
 	d, f := newTestDevice(b)
-	f.setRange(500, RangeValid)
+	f.setRange(500, 0)
 	if err := d.StartContinuous(); err != nil {
 		b.Fatal(err)
 	}

@@ -251,7 +251,7 @@ func TestMeasure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.Valid || m.RangeMM != 432 || m.Status != RangeValid {
+	if !m.Valid || m.RangeMM != 432 || m.Status != 0 {
 		t.Fatalf("Measure = %+v", m)
 	}
 
@@ -263,7 +263,7 @@ func TestMeasure(t *testing.T) {
 
 func TestMeasureOutOfRange(t *testing.T) {
 	d, f := newTestDevice(t)
-	f.setRange(8190, RangeValid)
+	f.setRange(8190, 0)
 	m, err := d.Measure()
 	if err != nil {
 		t.Fatal(err)
@@ -275,13 +275,25 @@ func TestMeasureOutOfRange(t *testing.T) {
 		t.Fatalf("Distance = %d, %v; want -1", mm, err)
 	}
 
-	f.setRange(500, RangeSigmaFail)
+	// Status 1 (sigma fail) is reported raw, but like the official M5Stack
+	// driver a distance within 4 m is still returned.
+	f.setRange(500, 1)
 	m, err = d.Measure()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Valid || m.Status != RangeSigmaFail {
-		t.Fatalf("status failure = %+v", m)
+	if !m.Valid || m.Status != 1 || StatusValid(m.Status) {
+		t.Fatalf("status reading = %+v", m)
+	}
+
+	// Status 11 ("range valid, merged pulse") seen on the real unit.
+	f.setRange(60, 11)
+	m, err = d.Measure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Valid || !StatusValid(m.Status) {
+		t.Fatalf("merged-pulse reading = %+v", m)
 	}
 }
 
