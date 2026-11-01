@@ -69,6 +69,15 @@ func (d *Device) Measure() (Measurement, error) {
 	return d.readRangeLocked()
 }
 
+// StartMeasurement starts one single-shot measurement and returns as soon as
+// the sensor accepts it; use Ready and ReadRange to fetch the result (the
+// official driver's do_range_measurement).
+func (d *Device) StartMeasurement() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.startSingleLocked()
+}
+
 // ReadRange reads the pending result without starting a new measurement. Use
 // it in continuous mode after Ready reports true.
 func (d *Device) ReadRange() (Measurement, error) {
@@ -96,6 +105,16 @@ func (d *Device) Distance() (int16, error) {
 		return -1, nil
 	}
 	return m.RangeMM, nil
+}
+
+// DistanceCM returns the range in centimetres (official get_distance), or
+// -0.1 when the reading is invalid.
+func (d *Device) DistanceCM() (float32, error) {
+	mm, err := d.Distance()
+	if err != nil {
+		return 0, err
+	}
+	return float32(mm) / 10, nil
 }
 
 // Reset performs a soft reset of the sensor. Call Init again before ranging.

@@ -85,8 +85,11 @@ _ = d.LongRange()                // 200 ms + 0.1 MCPS, up to 2 m
 | Function | Description |
 |---|---|
 | `New(bus I2C) *Device` | Driver on any bus implementing `Tx(addr, w, r)` |
+| `NewAt(bus, address)` | Construct for a sensor already at another address |
 | `Init() error` | Reset, identify and load the tuning/calibration sequence |
+| `StartMeasurement() error` | Start a single shot without waiting (do_range_measurement) |
 | `Measure() (Measurement, error)` | One single-shot reading |
+| `DistanceCM() (float32, error)` | Centimetres (official `get_distance`), `-0.1` invalid |
 | `Distance() (int16, error)` | Millimetres, `-1` when invalid |
 | `StartContinuous()` / `StopContinuous()` | Continuous mode |
 | `Ready() (bool, error)` | Result waiting (continuous mode) |

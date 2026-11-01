@@ -127,6 +127,14 @@ func New(bus I2C) *Device {
 	}
 }
 
+// NewAt is New with a non-default I2C address, for a sensor that was moved and
+// has not been power-cycled (the official driver's address argument).
+func NewAt(bus I2C, address uint8) *Device {
+	d := New(bus)
+	d.addr = address & 0x7F
+	return d
+}
+
 // SetTimeout sets the maximum time spent in each polling loop. Call it before
 // Init. A zero or negative value restores the default (200 ms).
 func (d *Device) SetTimeout(timeout time.Duration) {

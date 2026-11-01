@@ -244,6 +244,51 @@ func TestInitBadModel(t *testing.T) {
 	}
 }
 
+func TestNewAt(t *testing.T) {
+	f := newFakeSensor()
+	f.addr = 0x2A
+	d := NewAt(f, 0x2A)
+	d.SetTimeout(50 * time.Millisecond)
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init at 0x2A: %v", err)
+	}
+	if d.Address() != 0x2A {
+		t.Fatalf("Address = %#x", d.Address())
+	}
+	if _, err := d.Measure(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartMeasurement(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.setRange(321, 0)
+	if err := d.StartMeasurement(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := d.ReadRange()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Valid || m.RangeMM != 321 {
+		t.Fatalf("ReadRange after StartMeasurement = %+v", m)
+	}
+}
+
+func TestDistanceCM(t *testing.T) {
+	d, f := newTestDevice(t)
+	f.setRange(432, 0)
+	cm, err := d.DistanceCM()
+	if err != nil || cm != 43.2 {
+		t.Fatalf("DistanceCM = %v, %v; want 43.2", cm, err)
+	}
+	f.setRange(8190, 0)
+	cm, err = d.DistanceCM()
+	if err != nil || cm != -0.1 {
+		t.Fatalf("DistanceCM invalid = %v, %v; want -0.1", cm, err)
+	}
+}
+
 func TestMeasure(t *testing.T) {
 	d, f := newTestDevice(t)
 	f.setRange(432, 0)
@@ -452,6 +497,8 @@ func TestNoAlloc(t *testing.T) {
 		{"Measure", func() { _, _ = d.Measure() }},
 		{"ReadRange", func() { _, _ = d.ReadRange() }},
 		{"Distance", func() { _, _ = d.Distance() }},
+		{"DistanceCM", func() { _, _ = d.DistanceCM() }},
+		{"StartMeasurement", func() { _ = d.StartMeasurement() }},
 		{"TimingBudget", func() { _, _ = d.TimingBudget() }},
 		{"SetTimingBudget", func() { _ = d.SetTimingBudget(50 * time.Millisecond) }},
 		{"SignalRateLimit", func() { _, _ = d.SignalRateLimit() }},
